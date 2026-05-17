@@ -178,7 +178,7 @@ class ExtensionConfig(object):
       '-fvisibility=hidden',
     ]
     cxx.cxxflags += [
-      '-std=c++11',
+      '-std=c++17',
       '-fno-exceptions',
       '-fno-threadsafe-statics',
       '-Wno-non-virtual-dtor',
@@ -197,6 +197,8 @@ class ExtensionConfig(object):
       cxx.cflags += ['-Wno-narrowing']
     if have_clang or (cxx.version >= 'gcc-4.7'):
       cxx.cxxflags += ['-Wno-delete-non-virtual-dtor']
+    if have_clang or have_gcc:
+      cxx.cxxflags += ['-Wno-register']
     if cxx.version >= 'gcc-4.8':
       cxx.cflags += ['-Wno-unused-result']
 
@@ -233,6 +235,7 @@ class ExtensionConfig(object):
       '/EHsc',
       '/GR-',
       '/TP',
+      '/std:c++17',
     ]
     cxx.linkflags += [
       '/MACHINE:X86',
@@ -263,7 +266,9 @@ class ExtensionConfig(object):
 
   def configure_linux(self, cxx):
     cxx.defines += ['_LINUX', 'POSIX']
-    cxx.linkflags += ['-Wl,--exclude-libs,ALL', '-lm']
+    cxx.cflags += ['-fPIC']
+    cxx.cxxflags += ['-fPIC']
+    cxx.linkflags += ['-Wl,--exclude-libs,ALL', '-Wl,--no-undefined', '-Wl,-rpath,$ORIGIN', '-lm']
     if cxx.vendor == 'gcc':
       cxx.linkflags += ['-static-libgcc']
     elif cxx.vendor == 'clang':
@@ -284,15 +289,22 @@ class ExtensionConfig(object):
     cxx.defines += ['WIN32', '_WINDOWS']
 	
   def ConfigureForExtension(self, context, compiler):
-    compiler.cxxincludes += [
+    shared_includes = [
       os.path.join(context.currentSourcePath),
+      os.path.join(context.currentSourcePath, 'extension'),
+      os.path.join(context.currentSourcePath, 'extension', 'include'),
+      os.path.join(context.currentSourcePath, 'extension', 'config'),
       os.path.join(context.currentSourcePath, 'sdk'),
       os.path.join(self.sm_root, 'public'),
       os.path.join(self.sm_root, 'public', 'extensions'),
+      os.path.join(self.sm_root, 'public', 'safetyhook', 'include'),
+      os.path.join(self.sm_root, 'public', 'safetyhook', 'zydis'),
       os.path.join(self.sm_root, 'sourcepawn', 'include'),
       os.path.join(self.sm_root, 'public', 'amtl', 'amtl'),
       os.path.join(self.sm_root, 'public', 'amtl'),
     ]
+    compiler.cxxincludes += shared_includes
+    compiler.includes += shared_includes
     return compiler
 
   def ConfigureForHL2(self, binary, sdk):
@@ -303,10 +315,12 @@ class ExtensionConfig(object):
     else:
       mms_path = os.path.join(self.mms_root, 'core')
 
-    compiler.cxxincludes += [
+    hl2_includes = [
       os.path.join(mms_path),
       os.path.join(mms_path, 'sourcehook'),
     ]
+    compiler.cxxincludes += hl2_includes
+    compiler.includes += hl2_includes
 
     defines = ['SE_' + PossibleSDKs[i].define + '=' + PossibleSDKs[i].code for i in PossibleSDKs]
     compiler.defines += defines
@@ -357,7 +371,9 @@ class ExtensionConfig(object):
       compiler.linkflags += ['-lstdc++']
 
     for path in paths:
-      compiler.cxxincludes += [os.path.join(sdk.path, *path)]
+      include_path = os.path.join(sdk.path, *path)
+      compiler.cxxincludes += [include_path]
+      compiler.includes += [include_path]
 
     if builder.target_platform == 'linux':
       if sdk.name == 'episode1':
@@ -388,13 +404,17 @@ class ExtensionConfig(object):
         compiler.postlink += [compiler.Dep(os.path.join(lib_folder, 'interfaces_i486.a'))]
 
     dynamic_libs = []
+    runtime_link_libs = []
     if builder.target_platform == 'linux':
       if sdk.name in ['css', 'hl2dm', 'dods', 'tf2', 'sdk2013', 'bms', 'nucleardawn', 'l4d2', 'insurgency']:
         dynamic_libs = ['libtier0_srv.so', 'libvstdlib_srv.so']
+        runtime_link_libs = ['-ltier0_srv', '-lvstdlib_srv']
       elif sdk.name in ['l4d', 'blade', 'insurgency', 'csgo', 'dota']:
         dynamic_libs = ['libtier0.so', 'libvstdlib.so']
+        runtime_link_libs = ['-ltier0', '-lvstdlib']
       else:
         dynamic_libs = ['tier0_i486.so', 'vstdlib_i486.so']
+        runtime_link_libs = ['-ltier0_i486', '-lvstdlib_i486']
     elif builder.target_platform == 'mac':
       compiler.linkflags.append('-liconv')
       dynamic_libs = ['libtier0.dylib', 'libvstdlib.dylib']
@@ -418,6 +438,11 @@ class ExtensionConfig(object):
 
       linker = make_linker(source_path, output_path)
       compiler.linkflags[0:0] = [compiler.Dep(library, linker)]
+
+    if runtime_link_libs:
+      # Static SDK archives such as tier1_i486.a may reference tier0/vstdlib
+      # symbols that must appear later on the GNU ld command line.
+      compiler.postlink += ['-L' + lib_folder] + runtime_link_libs
 
     return binary
 

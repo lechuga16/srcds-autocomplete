@@ -34,7 +34,7 @@ def CopyFiles(src, dest, files):
 #)
 
 # GameData files
-CopyFiles('', 'addons/sourcemod/gamedata',
+CopyFiles('gamedata', 'addons/sourcemod/gamedata',
   [ 'autocomplete.games.txt' ]
 )
 
@@ -50,6 +50,6 @@ for cxx_task in Extension.extensions:
   builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/extensions'])
 
 # Autoload file
-CopyFiles('', 'addons/sourcemod/extensions',
+CopyFiles('extension', 'addons/sourcemod/extensions',
   [ 'autocomplete.autoload' ]
 )

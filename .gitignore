@@ -1,3 +1,6 @@
+# Prerequisites
+*.d
+
 # Compiled Object files
 *.slo
 *.lo
@@ -28,7 +31,18 @@
 *.out
 *.app
 
-# ambuild
-.ambuild
-build*/
-msvc*/
+# Visual Studio Garbage
+.vs/
+Debug/
+*.vcxproj.user
+
+build/
+.build/
+.deps/
+dist/
+.env
+
+# Temporary directories
+tmp/
+temp/
+.tmp/

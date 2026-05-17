@@ -5,9 +5,16 @@ projectName = 'autocomplete'
 
 # smsdk_ext.cpp will be automatically added later
 sourceFiles = [
-  'extension.cpp',
-  os.path.join(Extension.sm_root, 'public', 'asm', 'asm.c')
+  os.path.join('extension', 'src', 'extension.cpp'),
 ]
+
+asm_source = os.path.join(Extension.sm_root, 'public', 'asm', 'asm.c')
+if os.path.isfile(asm_source):
+  sourceFiles += [asm_source]
+
+safetyhook_include = os.path.join(Extension.sm_root, 'public', 'safetyhook', 'include', 'safetyhook.hpp')
+safetyhook_source_root = os.path.join(Extension.sm_root, 'public', 'safetyhook', 'src')
+safetyhook_zydis_root = os.path.join(Extension.sm_root, 'public', 'safetyhook', 'zydis')
 
 detour_games = ['l4d', 'l4d2', 'nucleardawn']
 
@@ -37,6 +44,19 @@ for sdk_name in Extension.sdks:
 
   if builder.target_platform == 'linux' or sdk_name in detour_games:
     binary.sources += [os.path.join(Extension.sm_root, 'public', 'CDetour', 'detours.cpp')]
+
+    if os.path.isfile(safetyhook_include):
+      binary.sources += [
+        os.path.join(safetyhook_source_root, 'allocator.cpp'),
+        os.path.join(safetyhook_source_root, 'inline_hook.cpp'),
+        os.path.join(safetyhook_source_root, 'utility.cpp'),
+        os.path.join(safetyhook_zydis_root, 'Zydis.c'),
+      ]
+
+      if builder.target_platform == 'windows':
+        binary.sources += [os.path.join(safetyhook_source_root, 'os.windows.cpp')]
+      elif builder.target_platform == 'linux':
+        binary.sources += [os.path.join(safetyhook_source_root, 'os.linux.cpp')]
 
   # SM 1.10+ compilation changes
   if os.path.isfile(os.path.join(Extension.sm_root, 'public', 'libudis86', 'decode.c')):
