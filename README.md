@@ -203,6 +203,24 @@ La salida se genera en:
 - `.build/linux-l4d2/`
 - `.build/windows-l4d2/`
 
+## Packaging y releases
+
+Comandos de empaquetado:
+
+- Linux / WSL:
+  - `make package-exts-linux`
+  - `make release-linux`
+- Windows:
+  - `make package-exts-windows`
+  - `make release-windows`
+
+Artifacts finales:
+
+- `dist/release/srcds-autocomplete-local-linux.zip`
+- `dist/release/srcds-autocomplete-local-windows.zip`
+
+El contenido publicado se describe en [plugin-package-map.json](C:\GitHub\srcds-autocomplete\plugin-package-map.json) y el flujo completo está resumido en [docs/BUILD_SYSTEM.md](C:\GitHub\srcds-autocomplete\docs\BUILD_SYSTEM.md).
+
 ## Notas Técnicas
 
 La extensión depende de:

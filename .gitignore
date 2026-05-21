@@ -41,6 +41,8 @@ build/
 .deps/
 dist/
 .env
+__pycache__/
+*.pyc
 
 # Temporary directories
 tmp/

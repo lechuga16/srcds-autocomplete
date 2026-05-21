@@ -5,7 +5,23 @@ on:
     branches:
       - main
       - develop
+    tags:
+      - "v*"
   pull_request:
+    paths:
+      - .github/workflows/build.yml
+      - scripts/**
+      - Makefile
+      - plugin-package-map.json
+      - configure.py
+      - AMBuildScript
+      - AMBuilder
+      - PackageScript
+      - extension/**
+      - gamedata/**
+      - README.md
+      - LICENSE
+      - docs/**
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +32,7 @@ permissions:
   contents: write
 
 jobs:
-  prepare-deps-linux:
+  deps-exts-linux:
     runs-on: ubuntu-22.04
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
@@ -30,36 +46,36 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y python3 python3-venv make gcc-multilib g++-multilib clang zip
+          sudo apt-get install -y python3 python3-venv make gcc-multilib g++-multilib clang
 
       - name: Resolve dependency cache key
         id: cache-key
         shell: bash
         run: |
-          echo "key=linux-deps-${{ runner.os }}-${{ hashFiles('scripts/fetch-linux-deps.sh', 'scripts/build-linux-l4d2.sh', 'Makefile', 'configure.py', 'AMBuildScript', 'AMBuilder', 'PackageScript') }}" >> "$GITHUB_OUTPUT"
+          echo "key=exts-linux-deps-${{ runner.os }}-${{ hashFiles('scripts/fetch-linux-deps.sh', 'scripts/build-linux-l4d2.sh', 'scripts/stage-artifact.py', 'scripts/package-release.py', 'plugin-package-map.json', 'Makefile', 'configure.py', 'AMBuildScript', 'PackageScript') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore dependency cache
         id: deps-cache-restore
         uses: actions/cache/restore@v5
         with:
-          path: .deps
+          path: .deps/exts-linux
           key: ${{ steps.cache-key.outputs.key }}
 
-      - name: Fetch build dependencies
+      - name: Fetch Linux extension dependencies
         if: steps.deps-cache-restore.outputs.cache-hit != 'true'
         shell: bash
-        run: make deps-linux
+        run: make deps-exts-linux
 
       - name: Save dependency cache
         if: steps.deps-cache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: .deps
+          path: .deps/exts-linux
           key: ${{ steps.cache-key.outputs.key }}
 
-  build-linux:
+  build-exts-linux:
     runs-on: ubuntu-22.04
-    needs: prepare-deps-linux
+    needs: deps-exts-linux
     outputs:
       basename: ${{ steps.artifact.outputs.basename }}
       release-tag: ${{ steps.artifact.outputs.release_tag }}
@@ -69,68 +85,106 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Install Linux dependencies
         shell: bash
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y python3 python3-venv make gcc-multilib g++-multilib clang zip
+          sudo apt-get install -y python3 python3-venv make gcc-multilib g++-multilib clang
 
       - name: Restore dependency cache
         uses: actions/cache/restore@v5
         with:
-          path: .deps
-          key: ${{ needs.prepare-deps-linux.outputs.cache-key }}
+          path: .deps/exts-linux
+          key: ${{ needs.deps-exts-linux.outputs.cache-key }}
           fail-on-cache-miss: true
 
-      - name: Build extension
+      - name: Build Linux extension
         shell: bash
-        run: make build-linux
+        run: make build-exts-linux
 
       - name: Resolve Linux artifact metadata
         id: artifact
         shell: bash
         run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "basename=srcds-autocomplete-$version-linux" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_name=srcds-autocomplete $version" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "${GITHUB_REF_NAME}" in
             main)
-              echo "basename=srcds-autocomplete-linux-latest" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-latest-linux" >> "$GITHUB_OUTPUT"
               echo "release_tag=channel/latest" >> "$GITHUB_OUTPUT"
               echo "release_name=Latest" >> "$GITHUB_OUTPUT"
               echo "prerelease=false" >> "$GITHUB_OUTPUT"
               ;;
             develop)
-              echo "basename=srcds-autocomplete-linux-develop" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-develop-linux" >> "$GITHUB_OUTPUT"
               echo "release_tag=channel/develop" >> "$GITHUB_OUTPUT"
               echo "release_name=Develop" >> "$GITHUB_OUTPUT"
               echo "prerelease=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo "basename=srcds-autocomplete-linux-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-              echo "release_tag=" >> "$GITHUB_OUTPUT"
-              echo "release_name=" >> "$GITHUB_OUTPUT"
-              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-${GITHUB_SHA::7}-linux" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
-      - name: Prepare Linux release archive
-        shell: bash
-        run: |
-          mkdir -p dist/release
-          (
-            cd ".build/linux-l4d2/package"
-            zip -r "$GITHUB_WORKSPACE/dist/release/${{ steps.artifact.outputs.basename }}.zip" addons
-          )
-
-      - name: Upload Linux artifact
+      - name: Upload Linux build tree
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.artifact.outputs.basename }}
-          path: dist/release/${{ steps.artifact.outputs.basename }}.zip
+          name: exts-build-linux
+          path: .build/linux-l4d2
+          if-no-files-found: error
+          retention-days: 1
+
+  release-linux:
+    runs-on: ubuntu-22.04
+    needs: build-exts-linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 make
+
+      - name: Download Linux build tree
+        uses: actions/download-artifact@v8
+        with:
+          name: exts-build-linux
+          path: .build/linux-l4d2
+
+      - name: Package Linux extension tree
+        run: make package-exts-linux
+
+      - name: Create Linux release zip
+        run: make release-linux RELEASE_BASENAME="${{ needs.build-exts-linux.outputs.basename }}"
+
+      - name: Validate Linux artifact
+        env:
+          EXTS_ARTIFACT_DIR: ${{ github.workspace }}/dist/linux/artifact
+          EXTS_PLATFORM: linux
+        run: bash ./scripts/ci-validate-artifact.sh
+
+      - name: Upload Linux release zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.build-exts-linux.outputs.basename }}
+          path: dist/release/${{ needs.build-exts-linux.outputs.basename }}.zip
           if-no-files-found: error
           retention-days: 14
 
-  prepare-deps-windows:
+  deps-exts-windows:
     runs-on: windows-2022
     outputs:
       cache-key: ${{ steps.cache-key.outputs.key }}
@@ -148,30 +202,30 @@ jobs:
         id: cache-key
         shell: bash
         run: |
-          echo "key=windows-deps-${{ runner.os }}-${{ hashFiles('scripts/fetch-windows-deps.ps1', 'scripts/build-windows-l4d2.ps1', 'Makefile', 'configure.py', 'AMBuildScript', 'AMBuilder', 'PackageScript') }}" >> "$GITHUB_OUTPUT"
+          echo "key=exts-windows-deps-${{ runner.os }}-${{ hashFiles('scripts/fetch-windows-deps.ps1', 'scripts/build-windows-l4d2.ps1', 'scripts/stage-artifact.py', 'scripts/package-release.py', 'plugin-package-map.json', 'Makefile', 'configure.py', 'AMBuildScript', 'PackageScript') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore dependency cache
         id: deps-cache-restore
         uses: actions/cache/restore@v5
         with:
-          path: .deps
+          path: .deps/exts-windows
           key: ${{ steps.cache-key.outputs.key }}
 
-      - name: Fetch Windows build dependencies
+      - name: Fetch Windows extension dependencies
         if: steps.deps-cache-restore.outputs.cache-hit != 'true'
         shell: pwsh
-        run: make deps-windows
+        run: make deps-exts-windows
 
       - name: Save dependency cache
         if: steps.deps-cache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: .deps
+          path: .deps/exts-windows
           key: ${{ steps.cache-key.outputs.key }}
 
-  build-windows:
+  build-exts-windows:
     runs-on: windows-2022
-    needs: prepare-deps-windows
+    needs: deps-exts-windows
     outputs:
       basename: ${{ steps.artifact.outputs.basename }}
 
@@ -187,48 +241,89 @@ jobs:
       - name: Restore dependency cache
         uses: actions/cache/restore@v5
         with:
-          path: .deps
-          key: ${{ needs.prepare-deps-windows.outputs.cache-key }}
+          path: .deps/exts-windows
+          key: ${{ needs.deps-exts-windows.outputs.cache-key }}
           fail-on-cache-miss: true
 
       - name: Build Windows extension
         shell: pwsh
-        run: make build-windows
+        run: make build-exts-windows
 
       - name: Resolve Windows artifact metadata
         id: artifact
         shell: bash
         run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "basename=srcds-autocomplete-$version-windows" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "${GITHUB_REF_NAME}" in
             main)
-              echo "basename=srcds-autocomplete-windows-latest" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-latest-windows" >> "$GITHUB_OUTPUT"
               ;;
             develop)
-              echo "basename=srcds-autocomplete-windows-develop" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-develop-windows" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo "basename=srcds-autocomplete-windows-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+              echo "basename=srcds-autocomplete-${GITHUB_SHA::7}-windows" >> "$GITHUB_OUTPUT"
               ;;
           esac
 
-      - name: Prepare Windows archive
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist\release | Out-Null
-          Compress-Archive -Path ".build\windows-l4d2\package\addons" -DestinationPath "dist\release\${{ steps.artifact.outputs.basename }}.zip" -Force
-
-      - name: Upload Windows artifact
+      - name: Upload Windows build tree
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.artifact.outputs.basename }}
-          path: dist/release/${{ steps.artifact.outputs.basename }}.zip
+          name: exts-build-windows
+          path: .build/windows-l4d2
+          if-no-files-found: error
+          retention-days: 1
+
+  release-windows:
+    runs-on: windows-2022
+    needs: build-exts-windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download Windows build tree
+        uses: actions/download-artifact@v8
+        with:
+          name: exts-build-windows
+          path: .build/windows-l4d2
+
+      - name: Package Windows extension tree
+        shell: pwsh
+        run: make package-exts-windows
+
+      - name: Create Windows release zip
+        shell: pwsh
+        run: make release-windows RELEASE_BASENAME="${{ needs.build-exts-windows.outputs.basename }}"
+
+      - name: Validate Windows artifact
+        shell: bash
+        env:
+          EXTS_ARTIFACT_DIR: ${{ github.workspace }}/dist/windows/artifact
+          EXTS_PLATFORM: windows
+        run: bash ./scripts/ci-validate-artifact.sh
+
+      - name: Upload Windows release zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.build-exts-windows.outputs.basename }}
+          path: dist/release/${{ needs.build-exts-windows.outputs.basename }}.zip
           if-no-files-found: error
           retention-days: 14
 
   publish:
     runs-on: ubuntu-22.04
-    needs: [build-linux, build-windows]
-    if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'develop')
+    needs: [build-exts-linux, build-exts-windows, release-linux, release-windows]
+    if: github.ref_type == 'branch' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))
 
     steps:
       - name: Checkout repository
@@ -236,48 +331,65 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download Linux artifact
+      - name: Download Linux release artifact
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.build-linux.outputs.basename }}
+          name: ${{ needs.build-exts-linux.outputs.basename }}
           path: dist/release
 
-      - name: Download Windows artifact
+      - name: Download Windows release artifact
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.build-windows.outputs.basename }}
+          name: ${{ needs.build-exts-windows.outputs.basename }}
           path: dist/release
 
       - name: Move channel tag
+        if: github.ref_type == 'branch' && (github.ref_name == 'main' || github.ref_name == 'develop')
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "${{ needs.build-linux.outputs.release-tag }}" "$GITHUB_SHA"
-          git push origin "refs/tags/${{ needs.build-linux.outputs.release-tag }}" --force
+          git tag -f "${{ needs.build-exts-linux.outputs.release-tag }}" "$GITHUB_SHA"
+          git push origin "refs/tags/${{ needs.build-exts-linux.outputs.release-tag }}" --force
 
       - name: Publish channel release
+        if: github.ref_type == 'branch' && (github.ref_name == 'main' || github.ref_name == 'develop')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          tag="${{ needs.build-linux.outputs.release-tag }}"
-          title="${{ needs.build-linux.outputs.release-name }}"
-          linux_asset="dist/release/${{ needs.build-linux.outputs.basename }}.zip"
-          windows_asset="dist/release/${{ needs.build-windows.outputs.basename }}.zip"
-
+          tag="${{ needs.build-exts-linux.outputs.release-tag }}"
+          title="${{ needs.build-exts-linux.outputs.release-name }}"
+          linux_asset="dist/release/${{ needs.build-exts-linux.outputs.basename }}.zip"
+          windows_asset="dist/release/${{ needs.build-exts-windows.outputs.basename }}.zip"
           if gh release view "$tag" >/dev/null 2>&1; then
-            if [[ "${{ needs.build-linux.outputs.prerelease }}" == "true" ]]; then
+            if [[ "${{ needs.build-exts-linux.outputs.prerelease }}" == "true" ]]; then
               gh release edit "$tag" --title "$title" --prerelease --latest=false
             else
-              gh release edit "$tag" --title "$title" --latest=false
+              gh release edit "$tag" --title "$title" --latest
             fi
           else
-            if [[ "${{ needs.build-linux.outputs.prerelease }}" == "true" ]]; then
+            if [[ "${{ needs.build-exts-linux.outputs.prerelease }}" == "true" ]]; then
               gh release create "$tag" --title "$title" --prerelease --latest=false --target "$GITHUB_SHA"
             else
-              gh release create "$tag" --title "$title" --latest=false --target "$GITHUB_SHA"
+              gh release create "$tag" --title "$title" --latest --target "$GITHUB_SHA"
             fi
           fi
+          gh release upload "$tag" "$linux_asset" "$windows_asset" --clobber
 
+      - name: Publish tagged release
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          title="${{ needs.build-exts-linux.outputs.release-name }}"
+          linux_asset="dist/release/${{ needs.build-exts-linux.outputs.basename }}.zip"
+          windows_asset="dist/release/${{ needs.build-exts-windows.outputs.basename }}.zip"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$title" --latest
+          else
+            gh release create "$tag" --title "$title" --verify-tag --latest
+          fi
           gh release upload "$tag" "$linux_asset" "$windows_asset" --clobber

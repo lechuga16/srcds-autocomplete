@@ -1,0 +1,25 @@
+{
+  "build": {
+    "extensions": {
+      "root": [
+        "autocomplete"
+      ]
+    }
+  },
+  "artifact": {
+    "addons": {
+      "sourcemod": {
+        "gamedata": {
+          "files": [
+            "autocomplete.games.txt"
+          ]
+        },
+        "extensions": {
+          "files": [
+            "autocomplete.autoload"
+          ]
+        }
+      }
+    }
+  }
+}
